@@ -1,8 +1,10 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 
 const User = require('./../models/userModel');
 const catchAsync = require('./../utils/catchAsync');
 const AppError = require('../utils/appError');
+const sendEmail = require('../utils/email');
 
 const signToken = (id) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
@@ -97,7 +99,55 @@ exports.forgotPassword = catchAsync(async (req, res, next) => {
   const resetToken = user.createPasswordResetToken();
   await user.save({ validateBeforeSave: false });
   //send the token as an email
-  res.send(resetToken);
+  const resetURL = `${req.protocol}://${req.get(
+    'host'
+  )}/api/v1/users/resetPassword/${resetToken}`;
+  const message = `Forgot your password? Submit a patch req with new password to ${resetURL}. \n If not, ignore the message`;
+  try {
+    await sendEmail({
+      email: user.email,
+      subject: 'Password reset token',
+      text: message,
+    });
+    res.status(200).json({
+      status: 'success',
+      message: 'Token sent',
+    });
+  } catch (err) {
+    user.createPasswordResetToken = undefined;
+    await user.save({ validateBeforeSave: false });
+    return next(new AppError('The error occured with sending email', 500));
+  }
 });
 
-exports.resetPassword = (req, res, next) => {};
+exports.resetPassword = catchAsync(async (req, res, next) => {
+  //get user based on the token
+  const hashedToken = crypto
+    .createHash('sha256')
+    .update(req.params.token)
+    .digest('hex');
+
+  const user = await User.findOne({
+    passwordResetToken: hashedToken,
+    passwordResetExpires: { $gt: Date.now() },
+  });
+
+  //if token has not expired and the user exists, set the new password
+  if (!user) {
+    return next(new AppError('Token is invalid or expired', 400));
+  }
+  //update the changedPasswordAt property for the user
+  user.password = req.body.password;
+  user.passwordConfirm = req.body.passwordConfirm;
+  user.passwordResetToken = undefined;
+  user.passwordResetExpires = undefined;
+  await user.save();
+
+  //log the user in by sending a new token
+  const token = signToken(user._id);
+
+  res.status(201).json({
+    status: 'success',
+    token,
+  });
+});
