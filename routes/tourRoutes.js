@@ -4,12 +4,6 @@ const authController = require('../controllers/authController');
 
 const router = express.Router();
 
-// router.param('id', tourController.checkID);
-
-//create a checkbody function
-//check whether tour data contains name and price data for tour
-//otherwise send 400 status
-
 //special route for the most popular tours
 router
   .route('/top-5-cheap')
